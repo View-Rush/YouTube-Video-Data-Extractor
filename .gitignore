@@ -2,6 +2,7 @@
 logs/
 *.log
 *.env
+service-account.json
 __pycache__/
 *.pyc
 *.pyo

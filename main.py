@@ -29,6 +29,10 @@ import re
 from dataclasses import dataclass
 import sqlite3
 import backoff
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 import psutil
 import threading
 from queue import Queue
@@ -38,13 +42,20 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging with better formatting
 os.makedirs('logs', exist_ok=True)
+
+# Create handlers
+file_handler = logging.FileHandler('logs/youtube_extractor.log')
+error_handler = logging.FileHandler('logs/error.log')
+error_handler.setLevel(logging.ERROR)  # Set level after creation
+console_handler = logging.StreamHandler()
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('logs/youtube_extractor.log'),
-        logging.FileHandler('logs/error.log', level=logging.ERROR),
-        logging.StreamHandler()
+        file_handler,
+        error_handler,
+        console_handler
     ]
 )
 logger = logging.getLogger(__name__)
@@ -203,25 +214,29 @@ class YouTubeExtractor:
         logger.info("YouTubeExtractor initialized successfully")
 
     def load_api_keys(self) -> List[str]:
-        """Load YouTube API keys from environment or config file with validation"""
+        """Load YouTube API keys from environment variables with fallback to config file"""
         keys = []
         
-        # Try to load from environment variables (up to 20 keys)
+        # Load from environment variables (up to 20 keys)
+        logger.info("Loading API keys from environment variables...")
         for i in range(1, 21):
             key = os.environ.get(f'YOUTUBE_API_KEY_{i}')
-            if key and key.strip() and key != 'your-api-key-here':
+            if key and key.strip() and key not in ['your-api-key-here', 'YOUR_YOUTUBE_API_KEY_HERE']:
                 keys.append(key.strip())
+                logger.info(f"Loaded API key {i} from environment")
         
-        # Try to load from config file
-        try:
-            with open('api_keys.json', 'r') as f:
-                config = json.load(f)
-                file_keys = config.get('youtube_api_keys', [])
-                for key in file_keys:
-                    if key and key.strip() and key not in ['YOUR_YOUTUBE_API_KEY_1', 'YOUR_YOUTUBE_API_KEY_2', 'YOUR_YOUTUBE_API_KEY_3']:
-                        keys.append(key.strip())
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.warning(f"Could not load api_keys.json: {e}")
+        # Fallback: Try to load from config file only if no env vars found
+        if not keys:
+            logger.info("No API keys found in environment, trying config file...")
+            try:
+                with open('api_keys.json', 'r') as f:
+                    config = json.load(f)
+                    file_keys = config.get('youtube_api_keys', [])
+                    for key in file_keys:
+                        if key and key.strip() and key not in ['YOUR_YOUTUBE_API_KEY_1', 'YOUR_YOUTUBE_API_KEY_2', 'YOUR_YOUTUBE_API_KEY_3']:
+                            keys.append(key.strip())
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                logger.info(f"Config file not available: {e}")
         
         # Remove duplicates while preserving order
         unique_keys = []
@@ -230,7 +245,10 @@ class YouTubeExtractor:
                 unique_keys.append(key)
         
         if not unique_keys:
-            raise ValueError("No valid YouTube API keys found. Please set environment variables or update api_keys.json")
+            logger.error("No valid YouTube API keys found!")
+            logger.error("Please set environment variables YOUTUBE_API_KEY_1, YOUTUBE_API_KEY_2, etc. in your .env file")
+            logger.error("Example: YOUTUBE_API_KEY_1=AIzaSyYourActualAPIKeyHere")
+            raise ValueError("No valid YouTube API keys found. Please set YOUTUBE_API_KEY_1, YOUTUBE_API_KEY_2, etc. in your .env file")
         
         # Validate API keys format
         validated_keys = []
@@ -248,7 +266,8 @@ class YouTubeExtractor:
 
     def validate_api_key_format(self, key: str) -> bool:
         """Basic validation of API key format"""
-        return bool(key and len(key) > 30 and key.isalnum() == False)
+        # YouTube API keys are typically 39 characters long and start with "AIza"
+        return bool(key and len(key) == 39 and key.startswith('AIza') and key.replace('-', '').replace('_', '').isalnum())
 
     def init_local_database(self):
         """Initialize SQLite database for local caching and deduplication"""
@@ -282,11 +301,10 @@ class YouTubeExtractor:
                     )
                 ''')
                 
-                conn.execute('''
-                    CREATE INDEX IF NOT EXISTS idx_video_id ON processed_videos(video_id);
-                    CREATE INDEX IF NOT EXISTS idx_processed_at ON processed_videos(processed_at);
-                    CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage_log(timestamp);
-                ''')
+                # Create indexes separately (SQLite doesn't allow multiple statements in one execute)
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_video_id ON processed_videos(video_id)')
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_processed_at ON processed_videos(processed_at)')
+                conn.execute('CREATE INDEX IF NOT EXISTS idx_api_usage_timestamp ON api_usage_log(timestamp)')
                 
             logger.info("Local database initialized successfully")
         except Exception as e:
@@ -352,26 +370,55 @@ class YouTubeExtractor:
                 self.storage_client = storage.Client(credentials=credentials, project=self.project_id)
                 self.bigquery_client = bigquery.Client(credentials=credentials, project=self.project_id)
             else:
-                logger.info("Using default credentials")
-                self.storage_client = storage.Client(project=self.project_id)
-                self.bigquery_client = bigquery.Client(project=self.project_id)
+                if credentials_path:
+                    logger.warning(f"Service account file not found at: {credentials_path}")
+                logger.info("Attempting to use default credentials or environment-based authentication")
+                
+                # Try to initialize without explicit credentials (will use default/environment auth)
+                try:
+                    self.storage_client = storage.Client(project=self.project_id) if self.project_id else None
+                    self.bigquery_client = bigquery.Client(project=self.project_id) if self.project_id else None
+                    logger.info("Successfully initialized with default credentials")
+                except Exception as auth_error:
+                    logger.warning(f"Could not initialize with default credentials: {auth_error}")
+                    logger.warning("Google Cloud features will be disabled. Set up service account or default credentials to enable.")
+                    self.storage_client = None
+                    self.bigquery_client = None
+                    return
             
-            # Test the connection
-            try:
-                # Test BigQuery connection
-                datasets = list(self.bigquery_client.list_datasets(max_results=1))
-                logger.info("BigQuery connection successful")
-            except Exception as e:
-                logger.warning(f"BigQuery connection test failed: {e}")
+            # Test the connections if clients were created
+            if self.bigquery_client:
+                try:
+                    # Test BigQuery connection
+                    datasets = list(self.bigquery_client.list_datasets(max_results=1))
+                    logger.info("BigQuery connection successful")
+                except Exception as e:
+                    logger.warning(f"BigQuery connection test failed: {e}")
+                    logger.warning("BigQuery features will be limited")
             
-            # Create resources if they don't exist
-            self.create_bucket_if_not_exists()
-            self.create_enhanced_bigquery_resources()
+            if self.storage_client:
+                try:
+                    # Test GCS connection
+                    buckets = list(self.storage_client.list_buckets(max_results=1))
+                    logger.info("Google Cloud Storage connection successful")
+                except Exception as e:
+                    logger.warning(f"GCS connection test failed: {e}")
+                    logger.warning("Cloud storage features will be limited")
             
-            logger.info("Google Cloud clients initialized successfully")
+            # Create resources if they don't exist and clients are available
+            if self.storage_client:
+                self.create_bucket_if_not_exists()
+            if self.bigquery_client:
+                self.create_enhanced_bigquery_resources()
+            
+            if self.storage_client or self.bigquery_client:
+                logger.info("Google Cloud clients initialized successfully")
+            else:
+                logger.warning("No Google Cloud clients initialized - running in local-only mode")
             
         except Exception as e:
             logger.error(f"Failed to initialize Google Cloud clients: {e}")
+            logger.warning("Google Cloud features will be disabled")
             # Don't raise here, allow the application to continue with limited functionality
             self.storage_client = None
             self.bigquery_client = None
