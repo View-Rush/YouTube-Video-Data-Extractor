@@ -28,6 +28,9 @@ from concurrent.futures import ThreadPoolExecutor
 import re
 from dataclasses import dataclass
 import sqlite3
+import psutil
+import backoff
+from dotenv import load_dotenv
 import backoff
 from dotenv import load_dotenv
 
@@ -1322,6 +1325,9 @@ class YouTubeExtractor:
             else:
                 published_timestamp = datetime.now()
             
+            # Current timestamp for extraction and last_updated
+            current_timestamp = datetime.now()
+            
             return {
                 'video_id': item.get('video_id', ''),
                 'title': item.get('title', '')[:500],  # Truncate titles
@@ -1340,13 +1346,13 @@ class YouTubeExtractor:
                 'thumbnail_url': item.get('thumbnail_url', ''),
                 'language': item.get('language', ''),
                 'detected_location': item.get('detected_location', ''),
-                'extraction_date': datetime.now(),
+                'extraction_date': current_timestamp,
                 'search_query': item.get('search_query', ''),
                 'video_url': item.get('video_url', ''),
                 'is_sri_lankan_content': item.get('is_sri_lankan_content', False),
                 'content_score': item.get('content_score', 0.0),
                 'thumbnail_downloaded': item.get('thumbnail_downloaded', False),
-                'last_updated': datetime.now(),
+                'last_updated': current_timestamp,
                 'engagement_rate': item.get('engagement_rate', 0.0),
                 'views_per_day': item.get('views_per_day', 0.0),
                 'subscriber_count': item.get('subscriber_count', 0),
@@ -1355,13 +1361,35 @@ class YouTubeExtractor:
         except Exception as e:
             logger.error(f"Error preparing BigQuery row: {e}")
             # Return minimal valid row
+            current_timestamp = datetime.now()
             return {
                 'video_id': item.get('video_id', ''),
                 'title': item.get('title', 'Error processing title'),
-                'extraction_date': datetime.now(),
+                'published_at': current_timestamp,
+                'channel_id': '',
+                'channel_title': '',
+                'view_count': 0,
+                'like_count': 0,
+                'comment_count': 0,
+                'duration': '',
+                'duration_seconds': 0,
+                'tags': [],
+                'category_id': '',
+                'category_name': '',
+                'thumbnail_url': '',
+                'language': '',
+                'detected_location': '',
+                'extraction_date': current_timestamp,
                 'search_query': item.get('search_query', ''),
+                'video_url': '',
                 'is_sri_lankan_content': False,
-                'content_score': 0.0
+                'content_score': 0.0,
+                'thumbnail_downloaded': False,
+                'last_updated': current_timestamp,
+                'engagement_rate': 0.0,
+                'views_per_day': 0.0,
+                'subscriber_count': 0,
+                'video_count': 0
             }
 
     def video_exists_in_bigquery(self, video_id: str) -> bool:
