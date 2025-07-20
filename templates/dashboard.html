@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}} - Sri Lanka YouTube Data Extractor</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/alpinejs/3.13.0/cdn.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.0/axios.min.js"></script>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🇱🇰</text></svg>">
+</head>
+<body class="bg-gray-50" x-data="dashboardApp()">
+    <!-- Navigation -->
+    <nav class="bg-gradient-to-r from-red-600 to-red-700 text-white shadow-lg">
+        <div class="container mx-auto px-4 py-4">
+            <div class="flex justify-between items-center">
+                <div class="flex items-center space-x-3">
+                    <span class="text-3xl">🇱🇰</span>
+                    <div>
+                        <h1 class="text-2xl font-bold">Sri Lanka YouTube Extractor</h1>
+                        <p class="text-red-200 text-sm">Comprehensive video data collection and analysis</p>
+                    </div>
+                </div>
+                
+                <div class="flex items-center space-x-6">
+                    <!-- Status Indicator -->
+                    <div class="flex items-center space-x-2">
+                        <div :class="status.status === 'running' ? 'bg-green-400' : 'bg-red-400'" 
+                             class="w-3 h-3 rounded-full animate-pulse"></div>
+                        <span class="font-medium" x-text="status.status === 'running' ? 'Running' : 'Idle'"></span>
+                    </div>
+                    
+                    <!-- Control Buttons -->
+                    <div class="flex space-x-2">
+                        <button 
+                            @click="status.status === 'running' ? stopExtraction() : startQuickExtraction()"
+                            :class="status.status === 'running' ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600'"
+                            class="px-4 py-2 rounded-md text-white font-medium transition-colors duration-200"
+                            :disabled="loading"
+                        >
+                            <span x-text="status.status === 'running' ? 'Stop' : 'Quick Start'"></span>
+                        </button>
+                        
+                        <button 
+                            @click="startScheduledExtraction()"
+                            class="px-4 py-2 bg-blue-500 hover:bg-blue-600 rounded-md text-white font-medium transition-colors duration-200"
+                            :disabled="loading || status.status === 'running'"
+                        >
+                            Full Extraction
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mx-auto px-4 py-8">
+        <!-- Status Overview Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500 uppercase tracking-wide">Total Videos</p>
+                        <p class="text-3xl font-bold text-blue-600" x-text="status.videos_processed || 0"></p>
+                        <p class="text-xs text-gray-400 mt-1">Extracted</p>
+                    </div>
+                    <div class="text-4xl text-blue-500">📹</div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500 uppercase tracking-wide">API Requests</p>
+                        <p class="text-3xl font-bold text-green-600" x-text="status.stats?.total_api_requests || 0"></p>
+                        <p class="text-xs text-gray-400 mt-1">Made</p>
+                    </div>
+                    <div class="text-4xl text-green-500">🔑</div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-purple-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500 uppercase tracking-wide">Active Keys</p>
+                        <p class="text-3xl font-bold text-purple-600" x-text="getActiveKeyCount()"></p>
+                        <p class="text-xs text-gray-400 mt-1" x-text="'of ' + (status.api_keys?.length || 0) + ' total'"></p>
+                    </div>
+                    <div class="text-4xl text-purple-500">⚡</div>
+                </div>
+            </div>
+            
+            <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-red-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-500 uppercase tracking-wide">Success Rate</p>
+                        <p class="text-3xl font-bold text-red-600" x-text="calculateSuccessRate() + '%'"></p>
+                        <p class="text-xs text-gray-400 mt-1">Extraction</p>
+                    </div>
+                    <div class="text-4xl text-red-500">📊</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Status and Controls -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Current Status -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 flex items-center">
+                    <span class="mr-2">📈</span>
+                    Current Status
+                </h2>
+                
+                <div class="space-y-4">
+                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <span class="font-medium">Status:</span>
+                        <span :class="status.status === 'running' ? 'text-green-600' : 'text-gray-600'" 
+                              class="font-semibold capitalize" x-text="status.status || 'idle'"></span>
+                    </div>
+                    
+                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <span class="font-medium">Current Message:</span>
+                        <span class="text-gray-700 text-sm" x-text="status.message || 'Ready'"></span>
+                    </div>
+                    
+                    <div x-show="status.last_extraction" class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <span class="font-medium">Last Extraction:</span>
+                        <span class="text-gray-700 text-sm" x-text="formatDateTime(status.last_extraction)"></span>
+                    </div>
+                    
+                    <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                        <span class="font-medium">Uptime:</span>
+                        <span class="text-gray-700 text-sm" x-text="status.uptime || 'N/A'"></span>
+                    </div>
+                    
+                    <div x-show="status.current_search_config" class="p-3 bg-blue-50 rounded-lg">
+                        <div class="font-medium text-blue-800 mb-2">Current Search:</div>
+                        <div class="text-sm text-blue-700">
+                            <span x-text="status.current_search_config?.query || 'None'"></span>
+                            <span class="text-blue-500 ml-2" x-text="'(max: ' + (status.current_search_config?.max_results || 0) + ')'"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Manual Controls -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 flex items-center">
+                    <span class="mr-2">🎛️</span>
+                    Manual Controls
+                </h2>
+                
+                <form @submit.prevent="startCustomExtraction()" class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-2">Search Query</label>
+                        <input 
+                            type="text" 
+                            x-model="customQuery.query"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="e.g., Sri Lanka tourism"
+                        >
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Max Results</label>
+                            <select x-model="customQuery.max_results" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="25">25</option>
+                                <option value="50">50</option>
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                            </select>
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Order By</label>
+                            <select x-model="customQuery.order" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                                <option value="relevance">Relevance</option>
+                                <option value="date">Date</option>
+                                <option value="viewCount">View Count</option>
+                                <option value="rating">Rating</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Published After</label>
+                            <input 
+                                type="date" 
+                                x-model="customQuery.published_after"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                        </div>
+                        
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">Published Before</label>
+                            <input 
+                                type="date" 
+                                x-model="customQuery.published_before"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            >
+                        </div>
+                    </div>
+                    
+                    <button 
+                        type="submit"
+                        class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium transition-colors duration-200"
+                        :disabled="loading || status.status === 'running' || !customQuery.query"
+                    >
+                        Start Custom Extraction
+                    </button>
+                </form>
+                
+                <!-- Quick Action Buttons -->
+                <div class="mt-6 pt-4 border-t border-gray-200">
+                    <p class="text-sm font-medium text-gray-700 mb-3">Quick Actions:</p>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button 
+                            @click="quickSearch('Sri Lanka tourism')"
+                            class="px-3 py-2 bg-green-100 hover:bg-green-200 text-green-800 rounded-md text-sm font-medium transition-colors"
+                            :disabled="loading || status.status === 'running'"
+                        >
+                            Tourism
+                        </button>
+                        <button 
+                            @click="quickSearch('Sri Lanka food')"
+                            class="px-3 py-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded-md text-sm font-medium transition-colors"
+                            :disabled="loading || status.status === 'running'"
+                        >
+                            Food
+                        </button>
+                        <button 
+                            @click="quickSearch('Sri Lanka culture')"
+                            class="px-3 py-2 bg-purple-100 hover:bg-purple-200 text-purple-800 rounded-md text-sm font-medium transition-colors"
+                            :disabled="loading || status.status === 'running'"
+                        >
+                            Culture
+                        </button>
+                        <button 
+                            @click="quickSearch('Sri Lanka news')"
+                            class="px-3 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-md text-sm font-medium transition-colors"
+                            :disabled="loading || status.status === 'running'"
+                        >
+                            News
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Keys Status -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+            <h2 class="text-xl font-bold mb-4 flex items-center">
+                <span class="mr-2">🔑</span>
+                API Keys Status
+            </h2>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Key Index</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Daily Usage</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Success Rate</th>
+                            <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Used</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="(key, index) in status.api_keys" :key="index">
+                            <tr :class="index === status.current_api_key_index ? 'bg-blue-50' : ''">
+                                <td class="px-4 py-2 whitespace-nowrap">
+                                    <div class="flex items-center">
+                                        <span class="text-sm font-medium text-gray-900" x-text="'Key ' + (index + 1)"></span>
+                                        <span x-show="index === status.current_api_key_index" class="ml-2 px-2 py-1 text-xs bg-blue-500 text-white rounded-full">Active</span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-2 whitespace-nowrap">
+                                    <span :class="getKeyStatusClass(key)" class="px-2 py-1 text-xs font-medium rounded-full" x-text="getKeyStatus(key)"></span>
+                                </td>
+                                <td class="px-4 py-2 whitespace-nowrap">
+                                    <div class="flex items-center">
+                                        <div class="flex-1 bg-gray-200 rounded-full h-2 mr-2">
+                                            <div :style="'width: ' + ((key.total_requests || 0) / 10000 * 100) + '%'" 
+                                                 class="bg-blue-600 h-2 rounded-full"></div>
+                                        </div>
+                                        <span class="text-sm text-gray-600" x-text="(key.total_requests || 0) + '/10k'"></span>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-600">
+                                    <span x-text="calculateKeySuccessRate(key) + '%'"></span>
+                                </td>
+                                <td class="px-4 py-2 whitespace-nowrap text-sm text-gray-600">
+                                    <span x-text="formatDateTime(key.last_used) || 'Never'"></span>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Recent Activity and Analytics -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+            <!-- Recent Videos -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 flex items-center justify-between">
+                    <span class="flex items-center">
+                        <span class="mr-2">📊</span>
+                        Analytics Summary
+                    </span>
+                    <button @click="loadAnalytics()" class="px-3 py-1 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm">
+                        Refresh
+                    </button>
+                </h2>
+                
+                <div x-show="analytics.summary.length > 0">
+                    <div class="space-y-3">
+                        <template x-for="item in analytics.summary.slice(0, 5)" :key="item.search_query">
+                            <div class="p-3 bg-gray-50 rounded-lg">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-medium text-gray-800" x-text="item.search_query"></span>
+                                    <span class="text-sm text-blue-600" x-text="item.total_videos + ' videos'"></span>
+                                </div>
+                                <div class="text-sm text-gray-600 mt-1">
+                                    <span x-text="item.unique_channels + ' channels'"></span>
+                                    <span class="mx-2">•</span>
+                                    <span x-text="formatNumber(item.avg_views) + ' avg views'"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                
+                <div x-show="analytics.summary.length === 0 && !loading" class="text-center py-8 text-gray-500">
+                    <div class="text-4xl mb-2">📊</div>
+                    <p>No analytics data available yet</p>
+                    <p class="text-sm">Start an extraction to see analytics</p>
+                </div>
+            </div>
+
+            <!-- Trending Videos -->
+            <div class="bg-white rounded-lg shadow-md p-6">
+                <h2 class="text-xl font-bold mb-4 flex items-center justify-between">
+                    <span class="flex items-center">
+                        <span class="mr-2">🔥</span>
+                        Trending Videos
+                    </span>
+                    <button @click="loadTrending()" class="px-3 py-1 bg-red-500 hover:bg-red-600 text-white rounded text-sm">
+                        Refresh
+                    </button>
+                </h2>
+                
+                <div x-show="analytics.trending_videos.length > 0">
+                    <div class="space-y-3">
+                        <template x-for="video in analytics.trending_videos.slice(0, 5)" :key="video.video_id">
+                            <div class="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+                                <div class="flex items-start space-x-3">
+                                    <img :src="video.thumbnail_url" :alt="video.title" class="w-16 h-12 object-cover rounded">
+                                    <div class="flex-1 min-w-0">
+                                        <h3 class="font-medium text-gray-800 text-sm line-clamp-2" x-text="video.title"></h3>
+                                        <p class="text-xs text-gray-600 mt-1" x-text="video.channel_title"></p>
+                                        <div class="flex items-center space-x-2 mt-1">
+                                            <span class="text-xs text-green-600" x-text="formatNumber(video.view_count) + ' views'"></span>
+                                            <span class="text-xs text-blue-600" x-text="formatNumber(video.like_count) + ' likes'"></span>
+                                        </div>
+                                        <a :href="'https://youtube.com/watch?v=' + video.video_id" target="_blank" 
+                                           class="text-xs text-blue-500 hover:text-blue-700 mt-1 inline-block">
+                                            Watch on YouTube →
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                
+                <div x-show="analytics.trending_videos.length === 0 && !loading" class="text-center py-8 text-gray-500">
+                    <div class="text-4xl mb-2">🔥</div>
+                    <p>No trending videos available</p>
+                    <p class="text-sm">Videos will appear after extraction</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Information -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-xl font-bold mb-4 flex items-center">
+                <span class="mr-2">⚙️</span>
+                System Information
+            </h2>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                    <h3 class="font-semibold text-gray-700 mb-2">Extraction Metrics</h3>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span>Total Cycles:</span>
+                            <span x-text="status.stats?.extraction_cycles || 0"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Successful:</span>
+                            <span x-text="status.stats?.successful_cycles || 0"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Failed:</span>
+                            <span x-text="status.stats?.failed_cycles || 0"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Error Rate:</span>
+                            <span x-text="calculateErrorRate() + '%'"></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                    <h3 class="font-semibold text-gray-700 mb-2">Performance</h3>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span>Videos/Hour:</span>
+                            <span x-text="calculateVideosPerHour()"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Avg Response Time:</span>
+                            <span x-text="status.stats?.avg_response_time || 'N/A'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Memory Usage:</span>
+                            <span x-text="status.stats?.memory_usage || 'N/A'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>CPU Usage:</span>
+                            <span x-text="status.stats?.cpu_usage || 'N/A'"></span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div>
+                    <h3 class="font-semibold text-gray-700 mb-2">Storage</h3>
+                    <div class="space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span>GCS Files:</span>
+                            <span x-text="status.stats?.gcs_files || 0"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>BigQuery Rows:</span>
+                            <span x-text="formatNumber(status.stats?.bigquery_rows || 0)"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Storage Used:</span>
+                            <span x-text="status.stats?.storage_used || 'N/A'"></span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span>Data Quality:</span>
+                            <span :class="(status.stats?.data_quality || 0) > 90 ? 'text-green-600' : 'text-yellow-600'" 
+                                  x-text="(status.stats?.data_quality || 0) + '%'"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div x-show="loading" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 max-w-sm mx-4">
+            <div class="flex items-center space-x-3">
+                <div class="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                <span class="text-gray-700">Processing...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div x-show="notification.show" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 transform translate-y-2"
+         x-transition:enter-end="opacity-100 transform translate-y-0"
+         x-transition:leave="transition ease-in duration-200"
+         x-transition:leave-start="opacity-100 transform translate-y-0"
+         x-transition:leave-end="opacity-0 transform translate-y-2"
+         class="fixed bottom-4 right-4 z-50">
+        <div :class="notification.type === 'success' ? 'bg-green-500' : notification.type === 'error' ? 'bg-red-500' : 'bg-blue-500'" 
+             class="text-white px-6 py-3 rounded-lg shadow-lg max-w-sm">
+            <div class="flex items-center justify-between">
+                <span x-text="notification.message"></span>
+                <button @click="notification.show = false" class="ml-4 text-white hover:text-gray-200">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function dashboardApp() {
+            return {
+                status: {
+                    status: 'idle',
+                    message: 'Ready to start extraction',
+                    videos_processed: 0,
+                    current_api_key_index: 0,
+                    api_key_usage: {},
+                    last_extraction: null,
+                    uptime: '0:00:00',
+                    api_keys: [],
+                    stats: {}
+                },
+                analytics: {
+                    summary: [],
+                    trending_videos: []
+                },
+                customQuery: {
+                    query: '',
+                    max_results: 50,
+                    order: 'relevance',
+                    published_after: '',
+                    published_before: ''
+                },
+                loading: false,
+                notification: {
+                    show: false,
+                    message: '',
+                    type: 'info'
+                },
+
+                init() {
+                    this.loadStatus();
+                    this.loadAnalytics();
+                    this.loadTrending();
+                    
+                    // Refresh status every 5 seconds
+                    setInterval(() => {
+                        this.loadStatus();
+                    }, 5000);
+                    
+                    // Refresh analytics every 30 seconds
+                    setInterval(() => {
+                        if (this.status.status === 'running') {
+                            this.loadAnalytics();
+                            this.loadTrending();
+                        }
+                    }, 30000);
+                },
+
+                async loadStatus() {
+                    try {
+                        const response = await axios.get('/api/status');
+                        this.status = response.data;
+                    } catch (error) {
+                        console.error('Error loading status:', error);
+                    }
+                },
+
+                async loadAnalytics() {
+                    try {
+                        const response = await axios.get('/api/analytics/summary');
+                        this.analytics.summary = response.data.summary || [];
+                    } catch (error) {
+                        console.error('Error loading analytics:', error);
+                    }
+                },
+
+                async loadTrending() {
+                    try {
+                        const response = await axios.get('/api/analytics/trending');
+                        this.analytics.trending_videos = response.data.trending_videos || [];
+                    } catch (error) {
+                        console.error('Error loading trending videos:', error);
+                    }
+                },
+
+                async startQuickExtraction() {
+                    this.loading = true;
+                    try {
+                        const config = {
+                            query: 'Sri Lanka',
+                            max_results: 50,
+                            order: 'relevance'
+                        };
+                        await axios.post('/api/extract', config);
+                        this.showNotification('Quick extraction started!', 'success');
+                    } catch (error) {
+                        this.showNotification('Failed to start extraction', 'error');
+                        console.error('Error starting extraction:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async startScheduledExtraction() {
+                    this.loading = true;
+                    try {
+                        await axios.post('/api/extract/scheduled');
+                        this.showNotification('Full extraction started!', 'success');
+                    } catch (error) {
+                        this.showNotification('Failed to start scheduled extraction', 'error');
+                        console.error('Error starting scheduled extraction:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async startCustomExtraction() {
+                    if (!this.customQuery.query) return;
+                    
+                    this.loading = true;
+                    try {
+                        await axios.post('/api/extract', this.customQuery);
+                        this.showNotification(`Custom extraction started for: ${this.customQuery.query}`, 'success');
+                    } catch (error) {
+                        this.showNotification('Failed to start custom extraction', 'error');
+                        console.error('Error starting custom extraction:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async quickSearch(query) {
+                    this.customQuery.query = query;
+                    await this.startCustomExtraction();
+                },
+
+                async stopExtraction() {
+                    // Note: This would need to be implemented in the backend
+                    this.showNotification('Stop functionality not yet implemented', 'info');
+                },
+
+                getActiveKeyCount() {
+                    return (this.status.api_keys || []).filter(key => 
+                        (key.total_requests || 0) < 10000 && !(key.quota_exceeded_count > 0)
+                    ).length;
+                },
+
+                calculateSuccessRate() {
+                    const total = this.status.stats?.extraction_cycles || 0;
+                    const successful = this.status.stats?.successful_cycles || 0;
+                    return total > 0 ? Math.round((successful / total) * 100) : 100;
+                },
+
+                calculateErrorRate() {
+                    const total = this.status.stats?.extraction_cycles || 0;
+                    const failed = this.status.stats?.failed_cycles || 0;
+                    return total > 0 ? Math.round((failed / total) * 100) : 0;
+                },
+
+                calculateVideosPerHour() {
+                    const uptime = this.status.uptime || '0:00:00';
+                    const [hours, minutes, seconds] = uptime.split(':').map(Number);
+                    const totalHours = hours + (minutes / 60) + (seconds / 3600);
+                    
+                    if (totalHours === 0) return 0;
+                    return Math.round((this.status.videos_processed || 0) / totalHours);
+                },
+
+                getKeyStatus(key) {
+                    const requests = key.total_requests || 0;
+                    const failed = key.failed_requests || 0;
+                    const quotaExceeded = key.quota_exceeded_count || 0;
+                    
+                    if (quotaExceeded > 0) return 'Quota Exceeded';
+                    if (requests >= 10000) return 'Limit Reached';
+                    if (failed > requests * 0.1) return 'High Error Rate';
+                    if (requests > 0) return 'Active';
+                    return 'Unused';
+                },
+
+                getKeyStatusClass(key) {
+                    const status = this.getKeyStatus(key);
+                    switch (status) {
+                        case 'Active': return 'bg-green-100 text-green-800';
+                        case 'Quota Exceeded': return 'bg-red-100 text-red-800';
+                        case 'Limit Reached': return 'bg-yellow-100 text-yellow-800';
+                        case 'High Error Rate': return 'bg-orange-100 text-orange-800';
+                        case 'Unused': return 'bg-gray-100 text-gray-800';
+                        default: return 'bg-gray-100 text-gray-800';
+                    }
+                },
+
+                calculateKeySuccessRate(key) {
+                    const total = key.total_requests || 0;
+                    const successful = key.successful_requests || 0;
+                    return total > 0 ? Math.round((successful / total) * 100) : 100;
+                },
+
+                formatDateTime(dateString) {
+                    if (!dateString) return 'N/A';
+                    try {
+                        return new Date(dateString).toLocaleString();
+                    } catch {
+                        return 'Invalid Date';
+                    }
+                },
+
+                formatNumber(num) {
+                    if (!num) return '0';
+                    return num.toLocaleString();
+                },
+
+                showNotification(message, type = 'info') {
+                    this.notification = {
+                        show: true,
+                        message,
+                        type
+                    };
+                    
+                    setTimeout(() => {
+                        this.notification.show = false;
+                    }, 5000);
+                }
+            }
+        }
+    </script>
+</body>
+</html>

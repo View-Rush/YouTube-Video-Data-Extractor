@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  youtube-extractor:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - GOOGLE_CLOUD_PROJECT_ID=${GOOGLE_CLOUD_PROJECT_ID}
+      - GCS_BUCKET_NAME=${GCS_BUCKET_NAME:-youtube-data-sri-lanka}
+      - BIGQUERY_DATASET_ID=${BIGQUERY_DATASET_ID:-youtube_analytics}
+      - BIGQUERY_TABLE_ID=${BIGQUERY_TABLE_ID:-video_data}
+      - YOUTUBE_API_KEY_1=${YOUTUBE_API_KEY_1}
+      - YOUTUBE_API_KEY_2=${YOUTUBE_API_KEY_2}
+      - YOUTUBE_API_KEY_3=${YOUTUBE_API_KEY_3}
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/service-account.json
+    volumes:
+      - ./service-account.json:/app/service-account.json:ro
+      - ./api_keys.json:/app/api_keys.json:ro
+      - ./logs:/app/logs
+    restart: unless-stopped
