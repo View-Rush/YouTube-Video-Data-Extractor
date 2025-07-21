@@ -31,6 +31,31 @@
                         <span class="font-medium" x-text="status.status === 'running' ? 'Running' : 'Idle'"></span>
                     </div>
                     
+                    <!-- Navigation Tabs -->
+                    <div class="flex space-x-4">
+                        <button 
+                            @click="activeTab = 'dashboard'"
+                            :class="activeTab === 'dashboard' ? 'text-white bg-red-800' : 'text-red-200 hover:text-white'"
+                            class="px-3 py-1 rounded-md text-sm font-medium transition-colors"
+                        >
+                            Dashboard
+                        </button>
+                        <button 
+                            @click="activeTab = 'dataset'; loadDataset()"
+                            :class="activeTab === 'dataset' ? 'text-white bg-red-800' : 'text-red-200 hover:text-white'"
+                            class="px-3 py-1 rounded-md text-sm font-medium transition-colors"
+                        >
+                            Dataset
+                        </button>
+                        <button 
+                            @click="activeTab = 'analytics'; loadPublishingAnalytics()"
+                            :class="activeTab === 'analytics' ? 'text-white bg-red-800' : 'text-red-200 hover:text-white'"
+                            class="px-3 py-1 rounded-md text-sm font-medium transition-colors"
+                        >
+                            Publishing Analytics
+                        </button>
+                    </div>
+                    
                     <!-- Control Buttons -->
                     <div class="flex space-x-2">
                         <button 

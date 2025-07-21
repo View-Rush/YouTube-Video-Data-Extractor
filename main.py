@@ -36,6 +36,16 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Custom JSON serializer for datetime objects
+def json_serial(obj):
+    """JSON serializer for datetime objects"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, (list, tuple)) and obj and isinstance(obj[0], datetime):
+        return [dt.isoformat() for dt in obj]
+    raise TypeError(f"Type {type(obj)} not serializable")
+
 import psutil
 import threading
 from queue import Queue
@@ -109,7 +119,6 @@ class ExtractionStatus(BaseModel):
 class VideoData(BaseModel):
     video_id: str
     title: str
-    description: str
     published_at: str
     channel_id: str
     channel_title: str
@@ -119,7 +128,6 @@ class VideoData(BaseModel):
     duration: str
     tags: List[str]
     category_id: str
-    thumbnail_url: str
     language: str
     location: Optional[str]
     extraction_date: str
@@ -503,7 +511,7 @@ class YouTubeExtractor:
         schema = [
             bigquery.SchemaField("video_id", "STRING", mode="REQUIRED", description="YouTube video ID"),
             bigquery.SchemaField("title", "STRING", mode="REQUIRED", description="Video title"),
-            bigquery.SchemaField("description", "STRING", mode="NULLABLE", description="Video description (truncated)"),
+            bigquery.SchemaField("description", "STRING", mode="NULLABLE", description="Video description (excluded by user preference)"),
             bigquery.SchemaField("published_at", "TIMESTAMP", mode="REQUIRED", description="Video publication timestamp"),
             bigquery.SchemaField("channel_id", "STRING", mode="REQUIRED", description="YouTube channel ID"),
             bigquery.SchemaField("channel_title", "STRING", mode="REQUIRED", description="Channel name"),
@@ -921,14 +929,13 @@ class YouTubeExtractor:
         # Basic video information
         video_id = item['id']
         title = snippet.get('title', '')
-        description = snippet.get('description', '')
         
         # Parse duration
         duration_iso = content_details.get('duration', '')
         duration_seconds = self.parse_duration_to_seconds(duration_iso)
         
-        # Detect Sri Lankan content and calculate relevance score
-        content_analysis = self.analyze_sri_lankan_content(title, description, snippet.get('tags', []))
+        # Detect Sri Lankan content and calculate relevance score (without description)
+        content_analysis = self.analyze_sri_lankan_content(title, '', snippet.get('tags', []))
         
         # Extract numeric statistics with fallbacks
         view_count = int(statistics.get('viewCount', 0))
@@ -941,9 +948,9 @@ class YouTubeExtractor:
         # Get channel information
         channel_info = self.extract_channel_info(snippet, channel_data)
         
-        # Calculate content quality score
+        # Calculate content quality score (without description length)
         quality_score = self.calculate_content_quality_score(
-            view_count, like_count, comment_count, len(title), len(description), duration_seconds
+            view_count, like_count, comment_count, len(title), 0, duration_seconds
         )
         
         # Determine publication date and calculate age
@@ -955,7 +962,6 @@ class YouTubeExtractor:
             # Basic video information
             'video_id': video_id,
             'title': title,
-            'description': description[:2000],  # Truncate for storage efficiency
             'published_at': published_at,
             'video_url': f"https://www.youtube.com/watch?v={video_id}",
             
@@ -980,7 +986,6 @@ class YouTubeExtractor:
             'category_name': self.get_category_name(snippet.get('categoryId', '')),
             
             # Media and technical details
-            'thumbnail_url': snippet.get('thumbnails', {}).get('high', {}).get('url', ''),
             'language': snippet.get('defaultLanguage', snippet.get('defaultAudioLanguage', '')),
             'caption_available': content_details.get('caption', 'false') == 'true',
             'definition': content_details.get('definition', 'sd'),
@@ -1012,7 +1017,6 @@ class YouTubeExtractor:
         
         try:
             # Simple regex for PT1H2M3S format
-            import re
             pattern = r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?'
             match = re.match(pattern, duration_iso)
             
@@ -1028,6 +1032,7 @@ class YouTubeExtractor:
 
     def analyze_sri_lankan_content(self, title: str, description: str, tags: List[str]) -> Dict:
         """Comprehensive analysis of Sri Lankan content relevance"""
+        # Note: Description parameter kept for backward compatibility but may be empty
         text_content = f"{title} {description} {' '.join(tags)}".lower()
         
         found_indicators = []
@@ -1131,8 +1136,7 @@ class YouTubeExtractor:
         # Content completeness
         if title_length > 20:
             score += 0.1
-        if description_length > 100:
-            score += 0.1
+        # Note: Description length check removed as descriptions are excluded by user preference
         
         # Duration factor (prefer videos between 1-20 minutes)
         if 60 <= duration <= 1200:  # 1-20 minutes
@@ -1203,7 +1207,7 @@ class YouTubeExtractor:
             blob.metadata = metadata
             
             # Compress and save JSON data
-            json_data = json.dumps(data, indent=2, ensure_ascii=False)
+            json_data = json.dumps(data, indent=2, ensure_ascii=False, default=json_serial)
             blob.upload_from_string(
                 json_data, 
                 content_type='application/json',
@@ -1226,7 +1230,7 @@ class YouTubeExtractor:
                 # Save locally as fallback
                 local_path = f"data/gcs_fallback_{filename}"
                 with open(local_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
+                    json.dump(data, f, indent=2, ensure_ascii=False, default=json_serial)
                 logger.info(f"Saved fallback copy locally: {local_path}")
             except Exception as local_e:
                 logger.error(f"Failed to save local fallback: {local_e}")
@@ -1307,7 +1311,7 @@ class YouTubeExtractor:
             try:
                 backup_file = f"data/bigquery_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
                 with open(backup_file, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
+                    json.dump(data, f, indent=2, ensure_ascii=False, default=json_serial)
                 logger.info(f"Saved BigQuery backup to: {backup_file}")
             except Exception as backup_error:
                 logger.error(f"Failed to create BigQuery backup: {backup_error}")
@@ -1331,8 +1335,8 @@ class YouTubeExtractor:
             return {
                 'video_id': item.get('video_id', ''),
                 'title': item.get('title', '')[:500],  # Truncate titles
-                'description': item.get('description', '')[:2000],  # Truncate descriptions
-                'published_at': published_timestamp,
+                'description': '',  # Description excluded by user preference
+                'published_at': published_timestamp.isoformat(),  # Convert to ISO string
                 'channel_id': item.get('channel_id', ''),
                 'channel_title': item.get('channel_title', '')[:100],
                 'view_count': item.get('view_count', 0),
@@ -1346,13 +1350,13 @@ class YouTubeExtractor:
                 'thumbnail_url': item.get('thumbnail_url', ''),
                 'language': item.get('language', ''),
                 'detected_location': item.get('detected_location', ''),
-                'extraction_date': current_timestamp,
+                'extraction_date': current_timestamp.isoformat(),  # Convert to ISO string
                 'search_query': item.get('search_query', ''),
                 'video_url': item.get('video_url', ''),
                 'is_sri_lankan_content': item.get('is_sri_lankan_content', False),
                 'content_score': item.get('content_score', 0.0),
                 'thumbnail_downloaded': item.get('thumbnail_downloaded', False),
-                'last_updated': current_timestamp,
+                'last_updated': current_timestamp.isoformat(),  # Convert to ISO string
                 'engagement_rate': item.get('engagement_rate', 0.0),
                 'views_per_day': item.get('views_per_day', 0.0),
                 'subscriber_count': item.get('subscriber_count', 0),
@@ -1365,7 +1369,7 @@ class YouTubeExtractor:
             return {
                 'video_id': item.get('video_id', ''),
                 'title': item.get('title', 'Error processing title'),
-                'published_at': current_timestamp,
+                'published_at': current_timestamp.isoformat(),  # Convert to ISO string
                 'channel_id': '',
                 'channel_title': '',
                 'view_count': 0,
@@ -1379,13 +1383,13 @@ class YouTubeExtractor:
                 'thumbnail_url': '',
                 'language': '',
                 'detected_location': '',
-                'extraction_date': current_timestamp,
+                'extraction_date': current_timestamp.isoformat(),  # Convert to ISO string
                 'search_query': item.get('search_query', ''),
                 'video_url': '',
                 'is_sri_lankan_content': False,
                 'content_score': 0.0,
                 'thumbnail_downloaded': False,
-                'last_updated': current_timestamp,
+                'last_updated': current_timestamp.isoformat(),  # Convert to ISO string
                 'engagement_rate': 0.0,
                 'views_per_day': 0.0,
                 'subscriber_count': 0,
