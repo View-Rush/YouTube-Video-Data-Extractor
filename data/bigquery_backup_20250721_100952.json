@@ -1,0 +1,62 @@
+[
+  {
+    "video_id": "oQ15GE6Erxs",
+    "title": "What the Europeans did to Sri Lanka",
+    "published_at": "2022-12-21T11:05:31Z",
+    "video_url": "https://www.youtube.com/watch?v=oQ15GE6Erxs",
+    "channel_id": "UCNT17Q5vN4uwwuevCiBlInw",
+    "channel_title": "Lost in Context",
+    "subscriber_count": 124000,
+    "video_count": 39,
+    "view_count": 109632,
+    "like_count": 2595,
+    "comment_count": 371,
+    "engagement_rate": 2.7054,
+    "views_per_day": 116.38216560509554,
+    "duration": "PT24M",
+    "duration_seconds": 1440,
+    "tags": [
+      "Sri Lanka",
+      "Ceylon",
+      "British Empire",
+      "Sri Lanka travel",
+      "Colonialism Sri Lanka",
+      "British Ceylon",
+      "Dutch Ceylon",
+      "Portuguese Ceylon",
+      "British Empire Sri Lanka",
+      "Europeans Sri Lanka"
+    ],
+    "category_id": "19",
+    "category_name": "Travel & Events",
+    "language": "en-GB",
+    "caption_available": false,
+    "definition": "hd",
+    "detected_location": "Sri Lanka",
+    "is_sri_lankan_content": true,
+    "content_score": 0.3,
+    "sri_lankan_indicators": [
+      [
+        "location",
+        "Sri Lanka"
+      ],
+      [
+        "location",
+        "Ceylon"
+      ],
+      [
+        "category",
+        "travel"
+      ]
+    ],
+    "quality_score": 0.7,
+    "video_age_days": 942,
+    "is_live": false,
+    "is_embeddable": true,
+    "license": "youtube",
+    "extraction_date": "2025-07-21T10:09:52.048179",
+    "search_query": "Sri Lanka",
+    "last_updated": "2025-07-21T10:09:52.048181",
+    "thumbnail_downloaded": false
+  }
+]
