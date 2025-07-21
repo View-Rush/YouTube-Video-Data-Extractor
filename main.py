@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Union
 import pandas as pd
+import pytz
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -507,11 +508,10 @@ class YouTubeExtractor:
         except Exception:
             pass
         
-        # Enhanced schema with more fields
+        # Enhanced schema with more fields for publishing time analysis
         schema = [
             bigquery.SchemaField("video_id", "STRING", mode="REQUIRED", description="YouTube video ID"),
             bigquery.SchemaField("title", "STRING", mode="REQUIRED", description="Video title"),
-            bigquery.SchemaField("description", "STRING", mode="NULLABLE", description="Video description (excluded by user preference)"),
             bigquery.SchemaField("published_at", "TIMESTAMP", mode="REQUIRED", description="Video publication timestamp"),
             bigquery.SchemaField("channel_id", "STRING", mode="REQUIRED", description="YouTube channel ID"),
             bigquery.SchemaField("channel_title", "STRING", mode="REQUIRED", description="Channel name"),
@@ -539,6 +539,15 @@ class YouTubeExtractor:
             bigquery.SchemaField("views_per_day", "FLOAT", mode="NULLABLE", description="Average views per day since publication"),
             bigquery.SchemaField("subscriber_count", "INTEGER", mode="NULLABLE", description="Channel subscriber count at extraction"),
             bigquery.SchemaField("video_count", "INTEGER", mode="NULLABLE", description="Total videos in channel"),
+            
+            # Publishing time analysis fields for optimal timing prediction
+            bigquery.SchemaField("publish_hour", "INTEGER", mode="NULLABLE", description="Hour of publication (0-23) in Sri Lankan timezone"),
+            bigquery.SchemaField("publish_day_of_week", "INTEGER", mode="NULLABLE", description="Day of week (0=Monday, 6=Sunday)"),
+            bigquery.SchemaField("publish_month", "INTEGER", mode="NULLABLE", description="Month of publication (1-12)"),
+            bigquery.SchemaField("publish_quarter", "INTEGER", mode="NULLABLE", description="Quarter of publication (1-4)"),
+            bigquery.SchemaField("publish_year", "INTEGER", mode="NULLABLE", description="Year of publication"),
+            bigquery.SchemaField("is_weekend", "BOOLEAN", mode="NULLABLE", description="Whether published on weekend"),
+            bigquery.SchemaField("time_of_day", "STRING", mode="NULLABLE", description="Time category: morning, afternoon, evening, night"),
         ]
         
         # Create table with partitioning and clustering
@@ -875,27 +884,36 @@ class YouTubeExtractor:
     def is_relevant_sri_lankan_content(self, video_data: Dict) -> bool:
         """Determine if video content is relevant to Sri Lanka"""
         content_score = video_data.get('content_score', 0)
+        is_sri_lankan = video_data.get('is_sri_lankan_content', False)
+        title = video_data.get('title', '')
         
-        # Basic threshold
-        if content_score < 0.3:
+        # Debug logging
+        logger.debug(f"Checking relevance for '{title[:50]}...': content_score={content_score}, is_sri_lankan={is_sri_lankan}")
+        
+        # Basic threshold - lowered to be less restrictive
+        if content_score < 0.1:
+            logger.debug(f"Rejected due to low content score: {content_score}")
             return False
         
         # Additional quality checks
-        title = video_data.get('title', '').lower()
+        title_lower = title.lower()
         description = video_data.get('description', '').lower()
         
         # Check for spam indicators
         spam_indicators = ['free money', 'get rich quick', '100% guaranteed', 'click here', 'subscribe for money']
-        if any(spam in title or spam in description for spam in spam_indicators):
+        if any(spam in title_lower or spam in description for spam in spam_indicators):
+            logger.debug(f"Rejected due to spam indicators in: {title}")
             return False
         
-        # Check minimum engagement
+        # Check minimum engagement - lowered threshold
         view_count = video_data.get('view_count', 0)
         like_count = video_data.get('like_count', 0)
         
-        if view_count < 10:  # Very low view count might indicate poor quality
+        if view_count < 1:  # Very low view count might indicate poor quality
+            logger.debug(f"Rejected due to low view count: {view_count}")
             return False
         
+        logger.debug(f"Accepted video: {title[:50]}...")
         return True
 
     def mark_video_processed(self, video_data: Dict):
@@ -989,6 +1007,9 @@ class YouTubeExtractor:
             'language': snippet.get('defaultLanguage', snippet.get('defaultAudioLanguage', '')),
             'caption_available': content_details.get('caption', 'false') == 'true',
             'definition': content_details.get('definition', 'sd'),
+            'thumbnail_url': snippet.get('thumbnails', {}).get('high', {}).get('url', 
+                                         snippet.get('thumbnails', {}).get('medium', {}).get('url', 
+                                         snippet.get('thumbnails', {}).get('default', {}).get('url', ''))),
             
             # Sri Lankan content analysis
             'detected_location': content_analysis['detected_location'],
@@ -1058,8 +1079,8 @@ class YouTubeExtractor:
                 found_indicators.append(('category', category))
                 category_score += 0.5
         
-        # Calculate overall relevance score
-        relevance_score = min(1.0, (location_score * 0.4 + cultural_score * 0.4 + category_score * 0.2) / 3)
+        # Calculate overall relevance score - improved calculation
+        relevance_score = min(1.0, (location_score * 0.4 + cultural_score * 0.4 + category_score * 0.2))
         
         # Detect primary location
         detected_location = None
@@ -1068,8 +1089,8 @@ class YouTubeExtractor:
                 detected_location = location
                 break
         
-        # Determine if content is Sri Lankan
-        is_sri_lankan = relevance_score > 0.2 or location_score > 0
+        # Determine if content is Sri Lankan - more inclusive criteria
+        is_sri_lankan = relevance_score > 0.1 or location_score > 0 or 'sri lanka' in text_content
         
         return {
             'is_sri_lankan': is_sri_lankan,
@@ -1316,9 +1337,64 @@ class YouTubeExtractor:
             except Exception as backup_error:
                 logger.error(f"Failed to create BigQuery backup: {backup_error}")
 
+    def extract_publishing_time_features(self, published_at: str) -> Dict:
+        """Extract publishing time features for optimal timing analysis"""
+        try:
+            # Parse the timestamp
+            if published_at:
+                published_timestamp = datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+            else:
+                published_timestamp = datetime.now()
+            
+            # Convert to Sri Lankan timezone (UTC+5:30)
+            sri_lanka_tz = pytz.timezone('Asia/Colombo')
+            local_time = published_timestamp.astimezone(sri_lanka_tz)
+            
+            # Extract time features
+            publish_hour = local_time.hour
+            publish_day_of_week = local_time.weekday()  # 0=Monday, 6=Sunday
+            publish_month = local_time.month
+            publish_quarter = (local_time.month - 1) // 3 + 1
+            publish_year = local_time.year
+            is_weekend = publish_day_of_week in [5, 6]  # Saturday=5, Sunday=6
+            
+            # Categorize time of day
+            if 5 <= publish_hour < 12:
+                time_of_day = "morning"
+            elif 12 <= publish_hour < 17:
+                time_of_day = "afternoon"
+            elif 17 <= publish_hour < 21:
+                time_of_day = "evening"
+            else:
+                time_of_day = "night"
+            
+            return {
+                'publish_hour': publish_hour,
+                'publish_day_of_week': publish_day_of_week,
+                'publish_month': publish_month,
+                'publish_quarter': publish_quarter,
+                'publish_year': publish_year,
+                'is_weekend': is_weekend,
+                'time_of_day': time_of_day
+            }
+        except Exception as e:
+            logger.error(f"Error extracting publishing time features: {e}")
+            return {
+                'publish_hour': None,
+                'publish_day_of_week': None,
+                'publish_month': None,
+                'publish_quarter': None,
+                'publish_year': None,
+                'is_weekend': None,
+                'time_of_day': None
+            }
+
     def prepare_bigquery_row(self, item: Dict) -> Dict:
         """Prepare a single row for BigQuery insertion"""
         try:
+            # Debug: Log the keys in the item to see what fields are present
+            logger.debug(f"prepare_bigquery_row received item with keys: {list(item.keys())}")
+            
             # Parse published_at timestamp
             published_at = item.get('published_at', '')
             if published_at:
@@ -1332,10 +1408,13 @@ class YouTubeExtractor:
             # Current timestamp for extraction and last_updated
             current_timestamp = datetime.now()
             
-            return {
+            # Extract publishing time features
+            published_at_str = item.get('published_at', '')
+            time_features = self.extract_publishing_time_features(published_at_str)
+            
+            row_data = {
                 'video_id': item.get('video_id', ''),
                 'title': item.get('title', '')[:500],  # Truncate titles
-                'description': '',  # Description excluded by user preference
                 'published_at': published_timestamp.isoformat(),  # Convert to ISO string
                 'channel_id': item.get('channel_id', ''),
                 'channel_title': item.get('channel_title', '')[:100],
@@ -1362,6 +1441,14 @@ class YouTubeExtractor:
                 'subscriber_count': item.get('subscriber_count', 0),
                 'video_count': item.get('video_count', 0)
             }
+            
+            # Add publishing time features
+            row_data.update(time_features)
+            
+            # Debug: Log the final row data keys
+            logger.debug(f"prepare_bigquery_row returning row with keys: {list(row_data.keys())}")
+            
+            return row_data
         except Exception as e:
             logger.error(f"Error preparing BigQuery row: {e}")
             # Return minimal valid row
@@ -1393,7 +1480,15 @@ class YouTubeExtractor:
                 'engagement_rate': 0.0,
                 'views_per_day': 0.0,
                 'subscriber_count': 0,
-                'video_count': 0
+                'video_count': 0,
+                # Publishing time features with default None values
+                'publish_hour': None,
+                'publish_day_of_week': None,
+                'publish_month': None,
+                'publish_quarter': None,
+                'publish_year': None,
+                'is_weekend': None,
+                'time_of_day': None
             }
 
     def video_exists_in_bigquery(self, video_id: str) -> bool:
