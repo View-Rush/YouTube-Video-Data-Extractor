@@ -18,3 +18,4 @@ tenacity==8.2.3
 psutil==5.9.6
 pandas>=2.2.0
 numpy>=1.26.0
+pydantic-settings>=0.3.0
