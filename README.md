@@ -515,7 +515,7 @@ quality_score = (
 - **Cultural Relevance**: Sinhala/Tamil language, cultural terms, local customs
 - **Category Relevance**: Alignment with targeted content categories
 - **Engagement Rate**: Ratio of likes, comments, and shares to views
-- **Content Quality**: Video length, description quality, thumbnail presence
+- **Content Quality**: Video length, tags quality, thumbnail presence
 
 ### API Key Management System
 Advanced quota management for optimal performance:
@@ -637,7 +637,7 @@ LIMIT 50;
 ```sql
 -- Content coverage by Sri Lankan locations
 SELECT 
-  REGEXP_EXTRACT(LOWER(title || ' ' || description), 
+  REGEXP_EXTRACT(LOWER(title), 
     r'(colombo|kandy|galle|jaffna|ella|sigiriya|negombo)') as location,
   COUNT(*) as video_count,
   AVG(sri_lanka_score) as avg_relevance,
